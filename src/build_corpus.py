@@ -89,7 +89,9 @@ def build_text(source, root, out):
     print(f"[corpus] DONE {kept:,} reviews -> {out}")
 
 
-def pack(arch, corpus_path, out_dir, budget=DAPT_TOKEN_BUDGET, heldout_blocks=2000):
+def pack(arch, corpus_path, out_dir, budget=None, heldout_blocks=2000):
+    if budget is None:
+        budget = DAPT_TOKEN_BUDGET      # read the CURRENT value, not a definition-time snapshot
     """Tokenise the review stream and chop into contiguous DAPT_BLOCK_LEN blocks.
 
     Every architecture gets the SAME budget of *real* tokens. Different tokenizers
@@ -115,13 +117,26 @@ def pack(arch, corpus_path, out_dir, budget=DAPT_TOKEN_BUDGET, heldout_blocks=20
             if len(blocks) * DAPT_BLOCK_LEN >= need:
                 break
 
-    arr = np.array(blocks, dtype=np.int32)
-    n_train = budget // DAPT_BLOCK_LEN
+        arr = np.array(blocks, dtype=np.int32)
+    total_blocks = len(arr)
+    # if the corpus is smaller than the budget (smoke test), carve out a small
+    # held-out slice and use the rest for training instead of going negative.
+    want_train = budget // DAPT_BLOCK_LEN
+    if total_blocks <= heldout_blocks + 1:
+        raise SystemExit(f"[pack:{arch}] corpus too small: only {total_blocks} blocks. "
+                         f"Use more reviews.")
+    if want_train + heldout_blocks > total_blocks:
+        heldout_blocks = max(1, min(heldout_blocks, total_blocks // 10))
+        n_train = total_blocks - heldout_blocks
+        print(f"[pack:{arch}] corpus smaller than budget; using {n_train} train blocks "
+              f"({n_train*DAPT_BLOCK_LEN:,} tokens) instead of the full {budget:,}")
+    else:
+        n_train = want_train
     os.makedirs(out_dir, exist_ok=True)
     np.save(os.path.join(out_dir, f"{arch}_train.npy"), arr[:n_train])
     np.save(os.path.join(out_dir, f"{arch}_heldout.npy"), arr[n_train:n_train + heldout_blocks])
     print(f"[pack:{arch}] train blocks={n_train:,} tokens={n_train*DAPT_BLOCK_LEN:,} "
-          f"heldout={len(arr)-n_train:,} blocks")
+          f"heldout={heldout_blocks:,} blocks  (total {total_blocks:,})")
 
 
 if __name__ == "__main__":

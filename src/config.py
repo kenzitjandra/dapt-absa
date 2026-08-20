@@ -10,9 +10,9 @@ LABELS = ["negative", "neutral", "positive"]
 LABEL2ID = {l: i for i, l in enumerate(LABELS)}
 
 # ---------------------------------------------------------------- DAPT budget
-DAPT_TOKEN_BUDGET = 50_000_000   # matched across all architectures
+DAPT_TOKEN_BUDGET = 50_000_000   # matched across all architectures (50_000_000)
 DAPT_BLOCK_LEN    = 256          # reviews are short; 512 is wasted compute
-DAPT_BATCH_TOKENS = 8192         # per optimizer step (bs * block_len), keep constant
+DAPT_BATCH_TOKENS = 8192            # per optimizer step (bs * block_len), keep constant
 
 
 @dataclass
@@ -35,8 +35,8 @@ class ArchConfig:
 
 
 ARCHS = {
-    "roberta": ArchConfig("roberta", "roberta-base",  "mlm",  lr=2e-5),
-    "gpt2":    ArchConfig("gpt2",    "gpt2",          "clm",  lr=5e-5),
+    "roberta": ArchConfig("roberta", "roberta-base", "mlm", lr=2e-5, epochs=5, train_bs=32),
+    "gpt2": ArchConfig("gpt2", "gpt2", "clm", lr=5e-5, epochs=5, train_bs=32),
     "t5":      ArchConfig("t5",      "t5-base",       "span", lr=1e-4),
     # scale control -- guards against "your T5 result is just parameter count"
     "t5small": ArchConfig("t5small", "t5-small",      "span", lr=3e-4),
