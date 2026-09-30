@@ -4,14 +4,18 @@ The comparison in this paper is between DELTAS, not absolute scores. That only
 works if the fine-tuning recipe is byte-for-byte identical between the `base`
 and `dapt` runs of a given architecture. Everything that could differ lives here.
 """
+import os
 from dataclasses import dataclass, field
+
+SMOKE = os.environ.get("SMOKE") == "1"   # test runs: separate _smoke outputs, tiny budget
 
 LABELS = ["negative", "neutral", "positive"]
 LABEL2ID = {l: i for i, l in enumerate(LABELS)}
 
 # ---------------------------------------------------------------- DAPT budget
-DAPT_TOKEN_BUDGET = 50_000_000   # matched across all architectures (50_000_000)
+DAPT_TOKEN_BUDGET = 1_000_000 if SMOKE else 50_000_000   # matched across all architectures
 DAPT_BLOCK_LEN    = 256          # reviews are short; 512 is wasted compute
+DAPT_SAVE_EVERY   = 50 if SMOKE else 1000   # steps between checkpoints; small so resume is testable
 DAPT_BATCH_TOKENS = 8192            # per optimizer step (bs * block_len), keep constant
 
 
@@ -46,8 +50,8 @@ SEEDS = [13, 42, 1337]
 
 PATHS = dict(
     mams="data/mams",                # MAMS-ATSA xml files
-    corpus="data/yelp_clean.txt",    # one review per line, cleaned
-    packed="data/packed",            # tokenized+packed blocks, per arch
-    ckpt="checkpoints",              # DAPT checkpoints (mirror to Drive!)
-    runs="runs",                     # per-run metrics json
+    corpus="data/yelp_clean_smoke.txt" if SMOKE else "data/yelp_clean.txt",
+    packed="data/packed_smoke" if SMOKE else "data/packed",
+    ckpt="checkpoints_smoke" if SMOKE else "checkpoints",   # mirror to Drive!
+    runs="runs_smoke" if SMOKE else "runs",
 )
