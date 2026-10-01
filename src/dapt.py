@@ -15,7 +15,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 from transformers import (AutoTokenizer, AutoModelForMaskedLM, AutoModelForCausalLM,
                           AutoModelForSeq2SeqLM, get_linear_schedule_with_warmup)
-from config import ARCHS, PATHS, DAPT_BLOCK_LEN
+from config import ARCHS, PATHS, DAPT_BLOCK_LEN, DAPT_SAVE_EVERY
 from collators import get_collator
 
 LOADER = {"mlm": AutoModelForMaskedLM,
@@ -106,7 +106,7 @@ def main(arch, resume=True):
         if step % 100 == 0:
             seen = step * cfg.dapt_bs * DAPT_BLOCK_LEN
             print(f"[{arch}] step {step}/{total} loss {loss.item():.4f} tokens {seen:,}")
-        if step % 1000 == 0:                  # <-- mirror `out` to Drive!
+        if step % DAPT_SAVE_EVERY == 0:                  # <-- mirror `out` to Drive!
             # order matters: trainer, model, state. Any crash in between leaves
             # trainer step != state step, which resume refuses instead of mixing.
             torch.save({"step": step, "opt": opt.state_dict(), "sched": sched.state_dict()},

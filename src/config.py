@@ -13,7 +13,7 @@ LABELS = ["negative", "neutral", "positive"]
 LABEL2ID = {l: i for i, l in enumerate(LABELS)}
 
 # ---------------------------------------------------------------- DAPT budget
-DAPT_TOKEN_BUDGET = 1_000_000 if SMOKE else 50_000_000   # matched across all architectures
+DAPT_TOKEN_BUDGET = 320_000 if SMOKE else 50_000_000   # matched across all architectures
 DAPT_BLOCK_LEN    = 256          # reviews are short; 512 is wasted compute
 DAPT_SAVE_EVERY   = 50 if SMOKE else 1000   # steps between checkpoints; small so resume is testable
 DAPT_BATCH_TOKENS = 8192            # per optimizer step (bs * block_len), keep constant
@@ -35,7 +35,7 @@ class ArchConfig:
     grad_clip: float = 1.0
     # DAPT
     dapt_lr: float = 5e-5
-    dapt_bs: int = 32            # * DAPT_BLOCK_LEN = 8192 tokens/step
+    dapt_bs: int = int(os.environ.get("DAPT_BS", 32))   # * DAPT_BLOCK_LEN tokens/step; lower on small GPUs
 
 
 ARCHS = {

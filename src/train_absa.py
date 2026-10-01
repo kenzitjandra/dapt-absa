@@ -16,7 +16,7 @@ import torch
 import transformers
 from sklearn.metrics import accuracy_score, f1_score
 from transformers import get_linear_schedule_with_warmup
-from config import ARCHS, PATHS, LABELS, DAPT_TOKEN_BUDGET
+from config import ARCHS, PATHS, LABELS, DAPT_TOKEN_BUDGET, SMOKE
 from data_mams import load_split
 import absa_models
 
@@ -45,7 +45,7 @@ def evaluate(m, rows, bs):
             preds, gold)
 
 
-def dapt_tokens(path):
+def dapt_report(path):
     """Gate 2 in code: refuse a partial, crashed or ineffective DAPT checkpoint."""
     rep_f = f"{path}/dapt_report.json"
     if not os.path.exists(rep_f):
@@ -56,7 +56,7 @@ def dapt_tokens(path):
     if rep["loss_after"] >= rep["loss_before"]:
         raise SystemExit(f"Held-out loss did not drop ({rep['loss_before']:.4f} -> "
                          f"{rep['loss_after']:.4f}). DAPT was not applied.")
-    return rep["tokens"]
+    return rep
 
 
 def main(a):
@@ -68,7 +68,7 @@ def main(a):
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
     path = cfg.hf_id if a.init == "base" else f"{PATHS['ckpt']}/{a.arch}_dapt"
-    d_tokens = dapt_tokens(path) if a.init == "dapt" else 0
+    rep = dapt_report(path) if a.init == "dapt" else {}
     m = absa_models.build(a.arch, path, dev, cfg.max_len)
 
     tr, va, te = load_split("train"), load_split("val"), load_split("test")
@@ -109,10 +109,12 @@ def main(a):
                "preds": preds, "gold": gold,          # kept for error analysis
                "n_params": sum(p.numel() for p in m.model.parameters()),
                # provenance: aggregate.py warns if a table mixes any of these
-               "commit": commit,
-               "gpu": torch.cuda.get_device_name() if dev == "cuda" else "cpu",
-               "transformers": transformers.__version__,
-               "dapt_tokens": d_tokens},
+               "git_commit": commit,
+               "gpu_name": torch.cuda.get_device_name() if dev == "cuda" else "cpu",
+               "transformers_version": transformers.__version__,
+               "smoke": SMOKE,
+               "corpus_source": rep.get("corpus_source", "unknown") if rep else "none",
+               "dapt_tokens": rep.get("tokens", 0)},
               open(f"{PATHS['runs']}/{tag}.json", "w"))
 
 
