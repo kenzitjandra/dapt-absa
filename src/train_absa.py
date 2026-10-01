@@ -10,12 +10,13 @@ Model selection is on VALIDATION macro-F1, and the test set is touched exactly
 once per run, at the end. If anyone starts tuning against test, the Deltas become
 meaningless.
 """
-import argparse, json, os, random
+import argparse, json, os, random, subprocess
 import numpy as np
 import torch
+import transformers
 from sklearn.metrics import accuracy_score, f1_score
 from transformers import get_linear_schedule_with_warmup
-from config import ARCHS, PATHS, LABELS
+from config import ARCHS, PATHS, LABELS, DAPT_TOKEN_BUDGET, SMOKE
 from data_mams import load_split
 import absa_models
 
@@ -44,12 +45,30 @@ def evaluate(m, rows, bs):
             preds, gold)
 
 
+def dapt_report(path):
+    """Gate 2 in code: refuse a partial, crashed or ineffective DAPT checkpoint."""
+    rep_f = f"{path}/dapt_report.json"
+    if not os.path.exists(rep_f):
+        raise SystemExit(f"{rep_f} missing: DAPT never finished. Run src.dapt first.")
+    rep = json.load(open(rep_f))
+    if rep["tokens"] < 0.99 * DAPT_TOKEN_BUDGET:
+        raise SystemExit(f"DAPT saw {rep['tokens']:,} tokens < budget {DAPT_TOKEN_BUDGET:,}.")
+    if rep["loss_after"] >= rep["loss_before"]:
+        raise SystemExit(f"Held-out loss did not drop ({rep['loss_before']:.4f} -> "
+                         f"{rep['loss_after']:.4f}). DAPT was not applied.")
+    return rep
+
+
 def main(a):
     cfg = ARCHS[a.arch]
     set_seed(a.seed)
+    # captured up front so a git problem fails now, not after training
+    commit = subprocess.run(["git", "describe", "--always", "--dirty"],
+                            capture_output=True, text=True, check=True).stdout.strip()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
     path = cfg.hf_id if a.init == "base" else f"{PATHS['ckpt']}/{a.arch}_dapt"
+    rep = dapt_report(path) if a.init == "dapt" else {}
     m = absa_models.build(a.arch, path, dev, cfg.max_len)
 
     tr, va, te = load_split("train"), load_split("val"), load_split("test")
@@ -88,7 +107,14 @@ def main(a):
     json.dump({"arch": a.arch, "init": a.init, "seed": a.seed,
                "val_f1": best_f1, "test_acc": acc, "test_f1": f1,
                "preds": preds, "gold": gold,          # kept for error analysis
-               "n_params": sum(p.numel() for p in m.model.parameters())},
+               "n_params": sum(p.numel() for p in m.model.parameters()),
+               # provenance: aggregate.py warns if a table mixes any of these
+               "git_commit": commit,
+               "gpu_name": torch.cuda.get_device_name() if dev == "cuda" else "cpu",
+               "transformers_version": transformers.__version__,
+               "smoke": SMOKE,
+               "corpus_source": rep.get("corpus_source", "unknown") if rep else "none",
+               "dapt_tokens": rep.get("tokens", 0)},
               open(f"{PATHS['runs']}/{tag}.json", "w"))
 
 

@@ -102,7 +102,8 @@ class SpanCorruptionCollator:
         return inp, tgt[:self.max_target]
 
     def __call__(self, blocks):
-        rng = np.random.default_rng()
+        # seeded from torch so torch.manual_seed controls every collator's masks
+        rng = np.random.default_rng(torch.randint(2**31, ()).item())
         pairs = [self._one(b, rng) for b in blocks]
         li = max(len(a) for a, _ in pairs)
         lt = max(len(b) for _, b in pairs)
