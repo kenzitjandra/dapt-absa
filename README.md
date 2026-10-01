@@ -1,7 +1,6 @@
 # DAPT × Transformer Topology for ABSA
 
-Four models (RoBERTa, GPT-2, T5-base, T5-small scale control) × {baseline, DAPT} × 3 seeds
-= **24 fine-tuning runs** + 4 DAPT runs.
+Three architectures × {baseline, DAPT} × 3 seeds = **18 fine-tuning runs**.
 The result of this paper is not accuracy. It is **Δ_DAPT**, and a Δ without error
 bars is a rumour.
 
@@ -9,55 +8,72 @@ bars is a rumour.
 
 ```python
 !git clone https://github.com/<team>/dapt-absa.git && cd dapt-absa
-!pip install -q -r dapt-absa/requirements.txt     # pinned. Then Runtime > Restart (numpy<2.0).
-```
-
-After the restart, run this cell at the top of every notebook:
-
-```python
-%cd /content/dapt-absa
-%env PYTHONPATH=src                     # modules use `from config import ...`
+!pip install -q transformers datasets accelerate scikit-learn scipy
 from google.colab import drive; drive.mount('/content/drive')
-# ONE shared Drive folder for all three of us. Everything off Colab disk survives disconnects.
-# Owner shares the folder; the other two use "Organize > Add shortcut" into My Drive so
-# this same path resolves on every account.
-import os
-S = "/content/drive/MyDrive/dapt-absa-shared"
-for d in ("data", "checkpoints", "runs"):
-    os.makedirs(f"{S}/{d}", exist_ok=True)
-    if not os.path.exists(d):
-        os.symlink(f"{S}/{d}", d)
-    assert os.path.islink(d), f"{d} is a real dir on Colab disk; move it to {S}/{d}"
-import torch, transformers; print(torch.__version__, transformers.__version__,
-                                  torch.cuda.get_device_name())
-!git describe --always --dirty          # must be a clean, tagged commit for real runs
+!ln -s /content/drive/MyDrive/dapt-absa-ckpt checkpoints   # SURVIVE DISCONNECTS
 ```
 
-Smoke tests: never edit `config.py` for them. Run results from a dirty tree are flagged by
-`aggregate.py`; move smoke run JSONs out of `runs/` before aggregating.
+## Setup (local, Windows / PowerShell)
+
+```powershell
+git clone https://github.com/<team>/dapt-absa.git; cd dapt-absa
+python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt          # pinned. Do not use unpinned installs.
+$env:PYTHONPATH = "src"                  # REQUIRED every new shell: modules do `from config import ...`
+```
+
+Download the MAMS-ATSA XML files into `data/mams/` (`train.xml`, `val.xml`, `test.xml`),
+then `python -m src.data_mams` to check them. `data/`, `checkpoints/` and `runs/` are
+git-ignored; never commit them.
+
+## Smoke test (minutes, any GPU)
+
+Checks the whole pipeline (pack, DAPT, resume, fine-tune) on a tiny budget. Results go
+to `*_smoke` paths and never touch real outputs. **Do not edit `config.py` for this**;
+set `SMOKE=1` in the shell.
+
+```powershell
+$env:SMOKE = "1"
+$env:DAPT_BS = "8"        # only for GPUs under ~8 GB; 32 OOMs on 4 GB (CUBLAS_STATUS_EXECUTION_FAILED)
+Copy-Item data\yelp_clean.txt data\yelp_clean_smoke.txt       # or build it with build_corpus --stage text
+python -m src.build_corpus --stage pack --arch roberta
+python -m src.dapt --arch roberta
+python -m src.train_absa --arch roberta --init dapt --seed 42
+```
+
+Expect: `LM loss drop` is positive, and `runs_smoke/roberta_dapt_s42.json` has non-zero
+`dapt_tokens`. Test accuracy is **not** expected to beat base at this scale.
+
+Test resume: Ctrl+C after `checkpoints_smoke/roberta_dapt/state.json` appears (a
+checkpoint is written every 50 steps in smoke mode), rerun the same `dapt` command, and
+look for `RESUMING from step N`. `--no-resume` forces a fresh start. To leave smoke
+mode: `Remove-Item Env:SMOKE, Env:DAPT_BS`.
+
+For real runs leave `DAPT_BS` unset (default 32). Move smoke JSONs out of `runs/`
+before running `aggregate.py`.
 
 ## Run order
 
 ```bash
-export PYTHONPATH=src           # from the repo root; `data/` paths are relative to it
-
 # 0. MAMS. Download the ATSA xml from github.com/siat-nlp/MAMS-for-ABSA -> data/mams/
 python -m src.data_mams          # sanity report. paste these numbers in the paper.
 
 # 1. Corpus (once, ~30 min)
 python -m src.build_corpus --stage text --source hf        # week 1: unblock the pipeline
 python -m src.build_corpus --stage text --source json --root data/yelp_raw   # real runs
-for A in roberta gpt2 t5 t5small; do python -m src.build_corpus --stage pack --arch $A; done
+for A in roberta gpt2 t5; do python -m src.build_corpus --stage pack --arch $A; done
 
-# 2. Baselines FIRST. 12 runs, ~15 min each.
-for A in roberta gpt2 t5 t5small; do for S in 13 42 1337; do
+# 2. Baselines FIRST. 9 runs, ~15 min each.
+for A in roberta gpt2 t5; do for S in 13 42 1337; do
   python -m src.train_absa --arch $A --init base --seed $S; done; done
 
 # 3. DAPT. 50M tokens each. ~35 min (roberta/gpt2), ~90 min (t5) on L4.
-for A in roberta gpt2 t5 t5small; do python -m src.dapt --arch $A; done
+for A in roberta gpt2 t5; do python -m src.dapt --arch $A; done
 
-# 4. DAPT fine-tunes. 12 runs. Refuses to start unless dapt_report.json passes Gate 2.
-for A in roberta gpt2 t5 t5small; do for S in 13 42 1337; do
+# 4. DAPT fine-tunes. 9 runs.
+for A in roberta gpt2 t5; do for S in 13 42 1337; do
   python -m src.train_absa --arch $A --init dapt --seed $S; done; done
 
 # 5. The table + the significance test
