@@ -13,6 +13,47 @@ from google.colab import drive; drive.mount('/content/drive')
 !ln -s /content/drive/MyDrive/dapt-absa-ckpt checkpoints   # SURVIVE DISCONNECTS
 ```
 
+## Setup (local, Windows / PowerShell)
+
+```powershell
+git clone https://github.com/<team>/dapt-absa.git; cd dapt-absa
+python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt          # pinned. Do not use unpinned installs.
+$env:PYTHONPATH = "src"                  # REQUIRED every new shell: modules do `from config import ...`
+```
+
+Download the MAMS-ATSA XML files into `data/mams/` (`train.xml`, `val.xml`, `test.xml`),
+then `python -m src.data_mams` to check them. `data/`, `checkpoints/` and `runs/` are
+git-ignored; never commit them.
+
+## Smoke test (minutes, any GPU)
+
+Checks the whole pipeline (pack, DAPT, resume, fine-tune) on a tiny budget. Results go
+to `*_smoke` paths and never touch real outputs. **Do not edit `config.py` for this**;
+set `SMOKE=1` in the shell.
+
+```powershell
+$env:SMOKE = "1"
+$env:DAPT_BS = "8"        # only for GPUs under ~8 GB; 32 OOMs on 4 GB (CUBLAS_STATUS_EXECUTION_FAILED)
+Copy-Item data\yelp_clean.txt data\yelp_clean_smoke.txt       # or build it with build_corpus --stage text
+python -m src.build_corpus --stage pack --arch roberta
+python -m src.dapt --arch roberta
+python -m src.train_absa --arch roberta --init dapt --seed 42
+```
+
+Expect: `LM loss drop` is positive, and `runs_smoke/roberta_dapt_s42.json` has non-zero
+`dapt_tokens`. Test accuracy is **not** expected to beat base at this scale.
+
+Test resume: Ctrl+C after `checkpoints_smoke/roberta_dapt/state.json` appears (a
+checkpoint is written every 50 steps in smoke mode), rerun the same `dapt` command, and
+look for `RESUMING from step N`. `--no-resume` forces a fresh start. To leave smoke
+mode: `Remove-Item Env:SMOKE, Env:DAPT_BS`.
+
+For real runs leave `DAPT_BS` unset (default 32). Move smoke JSONs out of `runs/`
+before running `aggregate.py`.
+
 ## Run order
 
 ```bash

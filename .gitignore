@@ -14,3 +14,6 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .DS_Store
+/.venv
+/checkpoints_smoke
+runs_smoke/roberta_dapt_s42.json
