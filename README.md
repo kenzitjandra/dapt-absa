@@ -6,12 +6,75 @@ bars is a rumour.
 
 ## Setup (Colab Pro, L4)
 
+Before running anything: **Runtime → Change runtime type → Runtime version: 2025.07**
+(Python 3.11). The default "Latest" runtime uses Python 3.13, which has no prebuilt
+wheels for the pinned packages, so `pip install` fails with "Failed building wheel
+for tokenizers". Also pick a GPU (L4 on Colab Pro).
+
+One-time: create a GitHub token (Settings → Developer settings → Personal access
+tokens, **Contents: Read and write**). In Colab, open the key icon (Secrets), add it
+as `GITHUB_TOKEN` and enable notebook access. Never paste the token into a cell.
+
+Keep your notebook in your **own** Drive, not in the shared folder and not in Git.
+Run Cell 1 and Cell 2 at the start of every session.
+
+**Cell 1: install, then restart**
+
 ```python
-!git clone https://github.com/<team>/dapt-absa.git && cd dapt-absa
-!pip install -q transformers datasets accelerate scikit-learn scipy
-from google.colab import drive; drive.mount('/content/drive')
-!ln -s /content/drive/MyDrive/dapt-absa-ckpt checkpoints   # SURVIVE DISCONNECTS
+from google.colab import drive, userdata
+drive.mount('/content/drive')
+
+token = userdata.get('GITHUB_TOKEN')
+!rm -rf /content/dapt-absa
+!git clone -q https://{token}@github.com/<team>/dapt-absa.git /content/dapt-absa
+%cd /content/dapt-absa
+!git checkout main                      # your branch while developing
+!pip install -q -r requirements.txt
 ```
+
+Then click **Runtime → Restart session** (`numpy<2.0` only takes effect after a
+restart; the cloned files stay on disk).
+
+The install ends with a pip "dependency resolver" error about gcsfs, opencv, thinc
+and umap-learn. This is harmless: the project does not use those packages. A real
+failure contains "Failed building wheel".
+
+**Cell 2: connect folders, set identity, check everything**
+
+```python
+%cd /content/dapt-absa
+%env PYTHONPATH=src
+SHARED = '/content/drive/MyDrive/dapt-absa-shared'
+
+for d in ['data', 'checkpoints', 'checkpoints_smoke', 'runs', 'runs_smoke', 'logs']:
+    !rm -rf {d} && ln -s {SHARED}/{d} {d}
+
+!git config user.name  "Your Name"
+!git config user.email "you@example.com"
+
+import torch, transformers, numpy
+print('GPU         :', torch.cuda.get_device_name(0))
+print('torch       :', torch.__version__)
+print('transformers:', transformers.__version__)
+print('numpy       :', numpy.__version__)
+!echo "commit      : $(git rev-parse --short HEAD)"
+```
+
+Check the printout every time: **L4**, versions matching `requirements.txt`, and the
+commit you expected. If `import torch` fails with "module functions cannot set
+METH_CLASS or METH_STATIC", delete the runtime, run Cell 1, restart the session,
+and run Cell 2 first without importing torch anywhere else.
+
+**Running anything:** always save a log to Drive.
+
+```python
+%env SMOKE=1
+!python -m src.train_absa --arch roberta --init base --seed 42 2>&1 | tee logs/smoke_roberta_base_s42.log
+```
+
+Git holds the code. The shared Drive folder holds everything the code produces.
+Colab deletes its local disk when a session ends, so push code early and often.
+Do not run `git remote -v` in a shared notebook: the token is in the URL.
 
 ## Setup (local, Windows / PowerShell)
 
