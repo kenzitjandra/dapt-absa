@@ -1,9 +1,14 @@
 # NEVER commit these. Yelp is multi-GB, checkpoints are ~500MB each.
 # A single accidental `git add .` with these unignored will wedge the repo for
 # everyone and GitHub will reject the push at 100MB/file anyway.
-data/
-checkpoints/
-runs/
+# No trailing slashes on the shared folders: in Colab they are symlinks,
+# and a pattern like "data/" only matches real folders.
+/data
+/checkpoints
+/checkpoints_smoke
+/runs
+/runs_smoke
+/logs
 *.npy
 *.bin
 *.safetensors
@@ -12,8 +17,7 @@ runs/
 # Colab / Python noise
 __pycache__/
 *.pyc
-.ipynb_checkpoints/
+.ipynb_checkpoints
 .DS_Store
 /.venv
-/checkpoints_smoke
-runs_smoke/roberta_dapt_s42.json
+config_smoke.py
