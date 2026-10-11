@@ -15,7 +15,7 @@ LABEL2ID = {l: i for i, l in enumerate(LABELS)}
 # ---------------------------------------------------------------- DAPT budget
 DAPT_TOKEN_BUDGET = 320_000 if SMOKE else 50_000_000   # matched across all architectures
 DAPT_BLOCK_LEN    = 256          # reviews are short; 512 is wasted compute
-DAPT_SAVE_EVERY   = 50 if SMOKE else 1000   # steps between checkpoints; small so resume is testable
+DAPT_SAVE_EVERY   = int(os.environ.get("DAPT_SAVE_EVERY", 50 if SMOKE else 1000))   # steps between checkpoints; small so resume is testable
 DAPT_BATCH_TOKENS = 8192            # per optimizer step (bs * block_len), keep constant
 
 
