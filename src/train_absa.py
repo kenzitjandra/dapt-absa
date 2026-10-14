@@ -67,7 +67,10 @@ def main(a):
                             capture_output=True, text=True, check=True).stdout.strip()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
-    path = cfg.hf_id if a.init == "base" else f"{PATHS['ckpt']}/{a.arch}_dapt"
+    if a.dapt_seed is not None and a.init != "dapt":
+        raise SystemExit("--dapt-seed needs --init dapt")
+    dsuf = "" if a.dapt_seed is None else f"_d{a.dapt_seed}"
+    path = cfg.hf_id if a.init == "base" else f"{PATHS['ckpt']}/{a.arch}_dapt{dsuf}"
     rep = dapt_report(path) if a.init == "dapt" else {}
     m = absa_models.build(a.arch, path, dev, cfg.max_len)
 
@@ -75,7 +78,8 @@ def main(a):
     print(f"[{a.arch}/{a.init}/s{a.seed}] train={len(tr)} val={len(va)} test={len(te)}")
 
     steps = (len(tr) // cfg.train_bs) * cfg.epochs
-    opt = torch.optim.AdamW(m.model.parameters(), lr=cfg.lr,
+    lr = cfg.lr * a.lr_mult
+    opt = torch.optim.AdamW(m.model.parameters(), lr=lr,
                             weight_decay=cfg.weight_decay)
     sched = get_linear_schedule_with_warmup(
         opt, int(cfg.warmup_ratio * steps), steps)
@@ -102,9 +106,13 @@ def main(a):
     acc, f1, preds, gold = evaluate(m, te, cfg.eval_bs)
     print(f"[{a.arch}/{a.init}/s{a.seed}] TEST acc={acc:.4f}  macro_f1={f1:.4f}")
 
-    os.makedirs(PATHS["runs"], exist_ok=True)
-    tag = f"{a.arch}_{a.init}_s{a.seed}"
+    # variants never enter the main table: they go to <runs>_extra with their own tag
+    extra = a.dapt_seed is not None or a.lr_mult != 1.0
+    runs_dir = PATHS["runs"] + ("_extra" if extra else "")
+    os.makedirs(runs_dir, exist_ok=True)
+    tag = f"{a.arch}_{a.init}{dsuf}_s{a.seed}" + (f"_lrx{a.lr_mult:g}" if a.lr_mult != 1.0 else "")
     json.dump({"arch": a.arch, "init": a.init, "seed": a.seed,
+               "dapt_seed": a.dapt_seed, "lr": lr,
                "val_f1": best_f1, "test_acc": acc, "test_f1": f1,
                "preds": preds, "gold": gold,          # kept for error analysis
                "n_params": sum(p.numel() for p in m.model.parameters()),
@@ -115,7 +123,7 @@ def main(a):
                "smoke": SMOKE,
                "corpus_source": rep.get("corpus_source", "unknown") if rep else "none",
                "dapt_tokens": rep.get("tokens", 0)},
-              open(f"{PATHS['runs']}/{tag}.json", "w"))
+              open(f"{runs_dir}/{tag}.json", "w"))
 
 
 if __name__ == "__main__":
@@ -123,4 +131,6 @@ if __name__ == "__main__":
     p.add_argument("--arch", required=True, choices=list(ARCHS))
     p.add_argument("--init", required=True, choices=["base", "dapt"])
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--dapt-seed", type=int, default=None, help="fine-tune from the DAPT replicate <arch>_dapt_d<N>")
+    p.add_argument("--lr-mult", type=float, default=1.0, help="scale the config learning rate (sensitivity check)")
     main(p.parse_args())

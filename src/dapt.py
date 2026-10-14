@@ -23,13 +23,13 @@ LOADER = {"mlm": AutoModelForMaskedLM,
           "span": AutoModelForSeq2SeqLM}
 
 
-def blocks_loader(path, bs, collate, shuffle, skip=0):
+def blocks_loader(path, bs, collate, shuffle, skip=0, perm_seed=0):
     """Returns (loader, total_batches). Shuffle order is fixed (seed 0) so a resume
     can drop exactly the `skip` batches already trained on, without collating them."""
     arr = np.load(path)
     total = len(arr) // bs
     if shuffle:
-        arr = arr[np.random.default_rng(0).permutation(len(arr))]
+        arr = arr[np.random.default_rng(perm_seed).permutation(len(arr))]
     ds = TensorDataset(torch.from_numpy(arr[skip * bs:].astype(np.int64)))
     return DataLoader(ds, batch_size=bs, shuffle=False, drop_last=True,
                       collate_fn=lambda b: collate([x[0].numpy() for x in b])), total
@@ -50,7 +50,7 @@ def heldout_loss(model, loader, dev):
     return tot / max(n, 1)
 
 
-def main(arch, resume=True):
+def main(arch, resume=True, seed=None):
     cfg = ARCHS[arch]
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     tok = AutoTokenizer.from_pretrained(cfg.hf_id)
@@ -59,7 +59,8 @@ def main(arch, resume=True):
 
     collate = get_collator(cfg.dapt_objective, tok)
 
-    out = f"{PATHS['ckpt']}/{arch}_dapt"
+    # seed=None is the original single DAPT run. A seed makes a replicate in its own folder.
+    out = f"{PATHS['ckpt']}/{arch}_dapt" + ("" if seed is None else f"_d{seed}")
     os.makedirs(out, exist_ok=True)
     state_f, trainer_f = f"{out}/state.json", f"{out}/trainer_state.pt"
     report_f = f"{out}/dapt_report.json"
@@ -72,7 +73,7 @@ def main(arch, resume=True):
     model = LOADER[cfg.dapt_objective].from_pretrained(out if st else cfg.hf_id).to(dev)
 
     tr, total = blocks_loader(f"{PATHS['packed']}/{arch}_train.npy", cfg.dapt_bs, collate,
-                              True, skip=start)
+                              True, skip=start, perm_seed=0 if seed is None else seed)
     ho, _ = blocks_loader(f"{PATHS['packed']}/{arch}_heldout.npy", cfg.dapt_bs, collate, False)
 
     if st:
@@ -91,6 +92,8 @@ def main(arch, resume=True):
                              f"{start}). Rerun with --no-resume.")
         opt.load_state_dict(ts["opt"]); sched.load_state_dict(ts["sched"])
 
+    if seed is not None:                      # after heldout_loss, which reseeds CUDA to 0
+        torch.manual_seed(seed)
     model.train()
     step = start
     for batch in tr:
@@ -118,7 +121,7 @@ def main(arch, resume=True):
     after = heldout_loss(model, ho, dev)
     print(f"[{arch}] held-out loss AFTER  dapt = {after:.4f}  (ppl {math.exp(after):.1f})")
     print(f"[{arch}] LM loss drop = {before - after:+.4f}   <-- MUST be positive")
-    json.dump({"step": step, "loss_before": before, "loss_after": after,
+    json.dump({"step": step, "loss_before": before, "loss_after": after, "seed": seed,
                "tokens": step * cfg.dapt_bs * DAPT_BLOCK_LEN},
               open(report_f, "w"), indent=2)
     for f in (state_f, trainer_f):            # finished: a rerun must start fresh, not "resume"
@@ -130,5 +133,6 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--arch", required=True, choices=list(ARCHS))
     p.add_argument("--no-resume", action="store_true")
+    p.add_argument("--seed", type=int, default=None, help="DAPT replicate: new data order, masks, dropout; writes <arch>_dapt_d<seed>")
     a = p.parse_args()
-    main(a.arch, resume=not a.no_resume)
+    main(a.arch, resume=not a.no_resume, seed=a.seed)
