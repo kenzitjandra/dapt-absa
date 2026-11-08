@@ -31,7 +31,9 @@ def load():
             r = json.load(open(f))
             lr0 = ARCHS[r["arch"]].lr
             mult = round(r.get("lr", lr0) / lr0, 3)            # main runs predate the "lr" field
-            cells.setdefault((r["arch"], r["init"], r.get("dapt_seed"), mult), {})[r["seed"]] = r
+            # scoring separates the RoBERTa MLM-head variant; base pairs only with the same scoring
+            key = (r["arch"], r["init"], r.get("dapt_seed"), mult, r.get("scoring", "head"))
+            cells.setdefault(key, {})[r["seed"]] = r
     return cells
 
 
@@ -57,8 +59,8 @@ def main():
              for _ in range(B)]
 
     main_p = []
-    for (arch, init, ds, mult), dr in sorted(cells.items(), key=str):
-        br = cells.get((arch, "base", None, mult))
+    for (arch, init, ds, mult, sc), dr in sorted(cells.items(), key=str):
+        br = cells.get((arch, "base", None, mult, sc))
         if init != "dapt" or not br:
             continue
         seeds = sorted(set(dr) & set(br))
@@ -75,12 +77,12 @@ def main():
         boot = np.array([np.mean([macro_f1(gold[ix], a[ix]) - macro_f1(gold[ix], b[ix])
                                   for a, b in zip(dp, bp)]) for ix in draws]) * 100
         lo, hi = np.percentile(boot, [2.5, 97.5])
-        name = "orig" if ds is None else f"d{ds}"
+        name = ("orig" if ds is None else f"d{ds}") + ("" if sc == "head" else f" {sc}score")
         sd = d.std(ddof=1) if len(d) > 1 else float("nan")
         print(f"{arch:8s} dapt={name:4s} lr x{mult:<4g} n={len(seeds)}  Delta F1 {d.mean():+.2f} +/- {sd:.2f}"
               f"  boot95 [{lo:+.2f}, {hi:+.2f}]  paired p={p:.3f}")
         print(f"{'':30s}per-seed: {', '.join(f'{x:+.2f}' for x in d)}   (seeds {seeds})")
-        if ds is None and mult == 1.0 and not np.isnan(p):
+        if ds is None and mult == 1.0 and sc == "head" and not np.isnan(p):
             main_p.append((arch, p))
 
     if main_p:

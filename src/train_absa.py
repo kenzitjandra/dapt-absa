@@ -72,7 +72,12 @@ def main(a):
     dsuf = "" if a.dapt_seed is None else f"_d{a.dapt_seed}"
     path = cfg.hf_id if a.init == "base" else f"{PATHS['ckpt']}/{a.arch}_dapt{dsuf}"
     rep = dapt_report(path) if a.init == "dapt" else {}
-    m = absa_models.build(a.arch, path, dev, cfg.max_len)
+    if a.scoring == "mlm":
+        if a.arch != "roberta":
+            raise SystemExit("--scoring mlm is only defined for roberta")
+        m = absa_models.RobertaPromptABSA(path, dev, cfg.max_len)
+    else:
+        m = absa_models.build(a.arch, path, dev, cfg.max_len)
 
     tr, va, te = load_split("train"), load_split("val"), load_split("test")
     print(f"[{a.arch}/{a.init}/s{a.seed}] train={len(tr)} val={len(va)} test={len(te)}")
@@ -107,11 +112,14 @@ def main(a):
     print(f"[{a.arch}/{a.init}/s{a.seed}] TEST acc={acc:.4f}  macro_f1={f1:.4f}")
 
     # variants never enter the main table: they go to <runs>_extra with their own tag
-    extra = a.dapt_seed is not None or a.lr_mult != 1.0
+    extra = a.dapt_seed is not None or a.lr_mult != 1.0 or a.scoring != "head"
     runs_dir = PATHS["runs"] + ("_extra" if extra else "")
     os.makedirs(runs_dir, exist_ok=True)
-    tag = f"{a.arch}_{a.init}{dsuf}_s{a.seed}" + (f"_lrx{a.lr_mult:g}" if a.lr_mult != 1.0 else "")
-    json.dump({"arch": a.arch, "init": a.init, "seed": a.seed,
+    tag = f"{a.arch}_{a.init}{dsuf}_s{a.seed}" + (f"_lrx{a.lr_mult:g}" if a.lr_mult != 1.0 else "") \
+        + ("_mlmscore" if a.scoring == "mlm" else "")
+    # the "scoring" key is only written for the variant, so default runs stay byte-identical
+    json.dump({**({"scoring": a.scoring} if a.scoring != "head" else {}),
+               "arch": a.arch, "init": a.init, "seed": a.seed,
                "dapt_seed": a.dapt_seed, "lr": lr,
                "val_f1": best_f1, "test_acc": acc, "test_f1": f1,
                "preds": preds, "gold": gold,          # kept for error analysis
@@ -133,4 +141,6 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--dapt-seed", type=int, default=None, help="fine-tune from the DAPT replicate <arch>_dapt_d<N>")
     p.add_argument("--lr-mult", type=float, default=1.0, help="scale the config learning rate (sensitivity check)")
+    p.add_argument("--scoring", choices=["head", "mlm"], default="head",
+                   help="mlm: roberta scores the labels through its MLM head (revision variant)")
     main(p.parse_args())

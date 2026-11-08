@@ -12,7 +12,7 @@ gets format-error penalties the others don't face.
 import torch
 import torch.nn.functional as F
 from transformers import (AutoTokenizer, AutoModelForSequenceClassification,
-                          AutoModelForCausalLM, AutoModelForSeq2SeqLM)
+                          AutoModelForCausalLM, AutoModelForSeq2SeqLM, AutoModelForMaskedLM)
 from config import LABELS
 
 
@@ -41,6 +41,43 @@ class RobertaABSA:
     def predict(self, enc):
         enc = {k: v for k, v in enc.items() if k != "labels"}
         return self.model(**enc).logits.argmax(-1)
+
+
+class RobertaPromptABSA:
+    """Revision variant (--scoring mlm): RoBERTa scores the 3 labels through its MLM head
+    at a <mask> position, the way GPT-2/T5 score label likelihoods through the LM head
+    that DAPT trained. Same argmax-over-3-labels rule. RobertaABSA stays the main model."""
+    kind = "enc"
+
+    def __init__(self, path, dev, max_len=128):
+        self.tok = AutoTokenizer.from_pretrained(path)
+        self.model = AutoModelForMaskedLM.from_pretrained(path).to(dev)   # DAPT ckpt keeps its MLM head
+        self.dev, self.max_len = dev, max_len
+        ids = [self.tok(" " + l, add_special_tokens=False)["input_ids"] for l in LABELS]
+        assert all(len(i) == 1 for i in ids), f"each label must be one BPE token: {ids}"
+        self.label_ids = torch.tensor([i[0] for i in ids], device=dev)
+
+    def encode(self, batch):
+        # <s> sentence </s></s> {aspect} is <mask>. </s>; only the sentence is ever truncated
+        second = [f"{b['aspect']} is {self.tok.mask_token}." for b in batch]
+        enc = self.tok([b["sentence"] for b in batch], second,
+                       truncation="only_first", max_length=self.max_len,
+                       padding=True, return_tensors="pt").to(self.dev)
+        enc["_gold"] = torch.tensor([b["label"] for b in batch], device=self.dev)
+        return enc
+
+    def _label_logits(self, enc):
+        mask_pos = enc["input_ids"] == self.tok.mask_token_id
+        assert (mask_pos.sum(1) == 1).all(), "need exactly one <mask> per row"
+        out = self.model(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"])
+        return out.logits[mask_pos][:, self.label_ids]                 # B x 3
+
+    def loss(self, enc):
+        return F.cross_entropy(self._label_logits(enc), enc["_gold"])
+
+    @torch.no_grad()
+    def predict(self, enc):
+        return self._label_logits(enc).argmax(-1)
 
 
 # -------------------------------------------------------------------------- T5
